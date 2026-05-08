@@ -445,6 +445,21 @@ class HealthReportApp:
             # Линия графика
             self.ax.plot(dates, values, marker='o', linestyle='-', color='#0056b3', linewidth=2, markersize=6, zorder=3)
 
+            # Добавляем подписи значений над каждой точкой
+            for i, (dt, val) in enumerate(zip(dates, values)):
+                # Смещение вверх над точкой
+                offset_y = (y_margin * 0.15)
+                self.ax.annotate(f'{val:g}', 
+                                xy=(dt, val), 
+                                xytext=(0, offset_y),
+                                textcoords='offset points',
+                                fontsize=7,
+                                rotation=45,
+                                ha='center',
+                                va='bottom',
+                                alpha=0.9,
+                                zorder=10)
+
             self.ax.set_title(f"Динамика: {param_name}", fontsize=12, pad=10)
             self.ax.set_xlabel("Дата тестирования", fontsize=10)
             self.ax.set_ylabel("Значение", fontsize=10)
