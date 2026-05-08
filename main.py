@@ -284,14 +284,59 @@ class HealthReportApp:
         
         if norm_min is not None and norm_max is not None and norm_min <= value <= norm_max:
             return "нормально", "#90EE90"
+        
+        # Проверка высоких значений (используем полные диапазоны как на диаграммах)
         if value > norm_max:
-            if ref[6] is not None and value >= self.parse_number(ref[6]): return "серьезные нарушения (+++)", "#DC143C"
-            if ref[4] is not None and value >= self.parse_number(ref[4]): return "значительные изменения (++)", "#FFD700"
-            if ref[2] is not None and value >= self.parse_number(ref[2]): return "незначительные изменения (+)", "#87CEEB"
+            # Серьезные нарушения (+++) - выше severe_high_min
+            if ref[6] is not None and value >= self.parse_number(ref[6]):
+                return "серьезные нарушения (+++)", "#DC143C"
+            
+            # Значительные изменения (++) - от significant_high_min до significant_high_max
+            if ref[4] is not None and ref[5] is not None:
+                significant_min = self.parse_number(ref[4])
+                significant_max = self.parse_number(ref[5])
+                if significant_min is not None and significant_max is not None:
+                    if significant_min <= value <= significant_max:
+                        return "значительные изменения (++)", "#FFD700"
+                elif significant_min is not None and value >= significant_min:
+                    return "значительные изменения (++)", "#FFD700"
+            
+            # Незначительные изменения (+) - от minor_high_min до minor_high_max
+            if ref[2] is not None and ref[3] is not None:
+                minor_min = self.parse_number(ref[2])
+                minor_max = self.parse_number(ref[3])
+                if minor_min is not None and minor_max is not None:
+                    if minor_min <= value <= minor_max:
+                        return "незначительные изменения (+)", "#87CEEB"
+                elif minor_min is not None and value >= minor_min:
+                    return "незначительные изменения (+)", "#87CEEB"
+        
+        # Проверка низких значений (используем полные диапазоны как на диаграммах)
         if value < norm_min:
-            if ref[11] is not None and value <= self.parse_number(ref[11]): return "серьезные нарушения (---)", "#DC143C"
-            if ref[9] is not None and value <= self.parse_number(ref[9]): return "значительные изменения (--)", "#FFD700"
-            if ref[7] is not None and value <= self.parse_number(ref[7]): return "незначительные изменения (-)", "#87CEEB"
+            # Серьезные нарушения (---) - ниже severe_low_max
+            if ref[11] is not None and value <= self.parse_number(ref[11]):
+                return "серьезные нарушения (---)", "#DC143C"
+            
+            # Значительные изменения (--) - от significant_low_min до significant_low_max
+            if ref[9] is not None and ref[10] is not None:
+                significant_min = self.parse_number(ref[9])
+                significant_max = self.parse_number(ref[10])
+                if significant_min is not None and significant_max is not None:
+                    if significant_min <= value <= significant_max:
+                        return "значительные изменения (--)", "#FFD700"
+                elif significant_max is not None and value <= significant_max:
+                    return "значительные изменения (--)", "#FFD700"
+            
+            # Незначительные изменения (-) - от minor_low_min до minor_low_max
+            if ref[7] is not None and ref[8] is not None:
+                minor_min = self.parse_number(ref[7])
+                minor_max = self.parse_number(ref[8])
+                if minor_min is not None and minor_max is not None:
+                    if minor_min <= value <= minor_max:
+                        return "незначительные изменения (-)", "#87CEEB"
+                elif minor_max is not None and value <= minor_max:
+                    return "незначительные изменения (-)", "#87CEEB"
+        
         return "нормально", "#90EE90"
     
     def update_patient_info(self, person, date, system):
