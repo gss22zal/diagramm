@@ -18,7 +18,7 @@ class HealthReportApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Отчёт по результатам тестирования")
-        self.root.geometry("1200x800")
+        self.root.geometry("1600x900")
         
         # Настройки подключения к БД из .env
         self.db_config = {
@@ -31,6 +31,9 @@ class HealthReportApp:
         
         self.conn = None
         self.connect_to_db()
+        
+        self.selected_param = None  # Текущий выбранный параметр для графика
+        self.current_system = None  # Текущая система организма
         
         self.create_widgets()
         self.load_persons()
@@ -56,7 +59,6 @@ class HealthReportApp:
             return None
         try:
             cleaned = str(value).replace(',', '.').strip()
-            # Убираем нечисловые символы, кроме точки и минуса
             cleaned = ''.join(c for c in cleaned if c.isdigit() or c in '.-')
             return float(cleaned) if cleaned else None
         except (ValueError, TypeError):
@@ -64,78 +66,98 @@ class HealthReportApp:
     
     def create_widgets(self):
         """Создание виджетов интерфейса"""
-        # Панель фильтров
+        # ─── ВЕРХНЯЯ ПАНЕЛЬ ФИЛЬТРОВ ───
         filter_frame = ttk.LabelFrame(self.root, text="Фильтры")
         filter_frame.pack(fill=tk.X, padx=10, pady=5)
         
         # Выбор человека
         ttk.Label(filter_frame, text="Пациент:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.E)
         self.person_var = tk.StringVar()
-        self.person_combo = ttk.Combobox(filter_frame, textvariable=self.person_var, state="readonly", width=25)
+        self.person_combo = ttk.Combobox(filter_frame, textvariable=self.person_var, state="readonly", width=20)
         self.person_combo.grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
         self.person_combo.bind('<<ComboboxSelected>>', self.on_person_selected)
         
         # Выбор даты
-        ttk.Label(filter_frame, text="Дата тестирования:").grid(row=0, column=2, padx=5, pady=5, sticky=tk.E)
+        ttk.Label(filter_frame, text="Дата:").grid(row=0, column=2, padx=5, pady=5, sticky=tk.E)
         self.date_var = tk.StringVar()
-        self.date_combo = ttk.Combobox(filter_frame, textvariable=self.date_var, state="readonly", width=20)
+        self.date_combo = ttk.Combobox(filter_frame, textvariable=self.date_var, state="readonly", width=18)
         self.date_combo.grid(row=0, column=3, padx=5, pady=5, sticky=tk.W)
         self.date_combo.bind('<<ComboboxSelected>>', self.on_date_selected)
-         # --- КНОПКА УДАЛЕНИЯ ---
-        ttk.Button(filter_frame, text="🗑 Удалить", command=self.delete_selected_records).grid(row=0, column=4, padx=6, pady=5)
-        #  КНОПКА Импорт PDF
-        self.import_btn = ttk.Button(filter_frame, text="📥 Импорт PDF", command=self.start_pdf_import)
-        self.import_btn.grid(row=0, column=5, padx=4, pady=5)
-
-
+        
         # Выбор системы организма
-        ttk.Label(filter_frame, text="Система организма:").grid(row=1, column=0, padx=5, pady=5, sticky=tk.E)
+        ttk.Label(filter_frame, text="Система:").grid(row=0, column=4, padx=5, pady=5, sticky=tk.E)
         self.system_var = tk.StringVar()
-        self.system_combo = ttk.Combobox(filter_frame, textvariable=self.system_var, state="readonly", width=25)
-        self.system_combo.grid(row=1, column=1, padx=5, pady=5, sticky=tk.W)
+        self.system_combo = ttk.Combobox(filter_frame, textvariable=self.system_var, state="readonly", width=30)
+        self.system_combo.grid(row=0, column=5, padx=5, pady=5, sticky=tk.W)
         self.system_combo.bind('<<ComboboxSelected>>', self.on_system_selected)
         
-        # Кнопка обновления
-        ttk.Button(filter_frame, text="Обновить", command=self.load_report).grid(row=1, column=3, padx=5, pady=5)
-        # Кнопка диаграмм
-        ttk.Button(filter_frame, text="📊 Диаграммы", command=self.open_chart_window).grid(row=1, column=2, padx=5, pady=5)
-       
-       
+        # Кнопки
+        ttk.Button(filter_frame, text="🗑 Удалить", command=self.delete_selected_records).grid(row=0, column=6, padx=5, pady=5)
+        self.import_btn = ttk.Button(filter_frame, text="📥 Импорт PDF", command=self.start_pdf_import)
+        self.import_btn.grid(row=0, column=7, padx=5, pady=5)
+        ttk.Button(filter_frame, text="Обновить", command=self.load_report).grid(row=0, column=8, padx=5, pady=5)
         
         self.import_status = ttk.Label(filter_frame, text="", foreground="blue")
-        self.import_status.grid(row=1, column=5, padx=5, pady=5, sticky=tk.W)
-
-        # Информация о пациенте
-        info_frame = ttk.LabelFrame(self.root, text="Информация о пациенте")
-        info_frame.pack(fill=tk.X, padx=10, pady=5)
+        self.import_status.grid(row=0, column=9, padx=5, pady=5, sticky=tk.W)
         
-        self.info_label = ttk.Label(info_frame, text="", font=("Arial", 10))
-        self.info_label.pack(anchor=tk.W)
+        # ─── ОСНОВНОЙ ФРЕЙМ (таблица + график) ───
+        main_pane = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
+        main_pane.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        # ─── ЛЕВАЯ КОЛОНКА (инфо + таблица) ───
+        left_frame = ttk.Frame(main_pane)
+        main_pane.add(left_frame, weight=2)
+        
+        # Информация о пациенте
+        info_frame = ttk.LabelFrame(left_frame, text="Информация о пациенте")
+        info_frame.pack(fill=tk.X, pady=5)
+        
+        self.info_label = ttk.Label(info_frame, text="", font=("Arial", 9))
+        self.info_label.pack(anchor=tk.W, padx=5)
         
         # Таблица результатов
-        table_frame = ttk.LabelFrame(self.root, text="Результаты измерений")
-        table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        table_frame = ttk.LabelFrame(left_frame, text="Результаты измерений (кликните для графика)")
+        table_frame.pack(fill=tk.BOTH, expand=True, pady=5)
         
         # Создаем Canvas и Scrollbars для прокрутки
-        self.canvas = tk.Canvas(table_frame)
-        scrollbar_y = ttk.Scrollbar(table_frame, orient="vertical", command=self.canvas.yview)
-        scrollbar_x = ttk.Scrollbar(table_frame, orient="horizontal", command=self.canvas.xview)
+        self.table_canvas = tk.Canvas(table_frame, bg='white')
+        scrollbar_y = ttk.Scrollbar(table_frame, orient="vertical", command=self.table_canvas.yview)
+        scrollbar_x = ttk.Scrollbar(table_frame, orient="horizontal", command=self.table_canvas.xview)
         
-        self.scrollable_frame = tk.Frame(self.canvas)
+        self.scrollable_frame = tk.Frame(self.table_canvas, bg='white')
         self.scrollable_frame.bind(
             "<Configure>",
-            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+            lambda e: self.table_canvas.configure(scrollregion=self.table_canvas.bbox("all"))
         )
         
-        self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
-        self.canvas.configure(yscrollcommand=scrollbar_y.set, xscrollcommand=scrollbar_x.set)
+        self.table_canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        self.table_canvas.configure(yscrollcommand=scrollbar_y.set, xscrollcommand=scrollbar_x.set)
         
-        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.table_canvas.grid(row=0, column=0, sticky="nsew")
         scrollbar_y.grid(row=0, column=1, sticky="ns")
         scrollbar_x.grid(row=1, column=0, sticky="ew")
         
         table_frame.grid_rowconfigure(0, weight=1)
         table_frame.grid_columnconfigure(0, weight=1)
+        
+        # ─── ПРАВАЯ КОЛОНКА (график) ───
+        right_frame = ttk.Frame(main_pane)
+        main_pane.add(right_frame, weight=1)
+        
+        # График Matplotlib
+        chart_frame = ttk.LabelFrame(right_frame, text="Динамика параметра")
+        chart_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        # Matplotlib Figure
+        plt.style.use('default')
+        self.fig = plt.Figure(figsize=(5, 4), dpi=100)
+        self.ax = self.fig.add_subplot(111)
+        self.canvas = FigureCanvasTkAgg(self.fig, master=chart_frame)
+        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        
+        # Заголовок графика
+        self.chart_title = ttk.Label(chart_frame, text="Выберите параметр из таблицы", font=("Arial", 10, "bold"))
+        self.chart_title.pack(pady=5)
         
         # Статусная строка
         self.status_label = ttk.Label(self.root, text="", relief=tk.SUNKEN, anchor=tk.W)
@@ -174,14 +196,11 @@ class HealthReportApp:
             messagebox.showerror("Ошибка", f"Не удалось загрузить даты:\n{e}")
     
     def on_date_selected(self, event):
-        # Обработка выбора даты БЕЗ сброса фильтра системы организма
+        """Обработка выбора даты"""
         person = self.person_var.get()
         date_str = self.date_var.get()
         if not person or not date_str:
             return
-
-        # 1. Запоминаем текущий выбор системы ДО обновления списка
-        old_system = self.system_var.get()
 
         try:
             date = datetime.strptime(date_str, "%d.%m.%Y %H:%M")
@@ -196,42 +215,42 @@ class HealthReportApp:
             systems = [row[0] for row in cursor.fetchall()]
             self.system_combo['values'] = systems
             
-            # 2. Пытаемся восстановить предыдущий выбор
-            if old_system in systems:
-                self.system_combo.set(old_system)
-            elif systems:
+            # Автоматически выбираем первую систему
+            if systems:
                 self.system_combo.current(0)
-            else:
-                self.system_var.set('')
-                
-            # 3. Загружаем отчёт
-            self.load_report()
+                self.current_system = systems[0]
+                self.load_report()
             
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось загрузить системы:\n{e}")
     
     def on_system_selected(self, event):
         """Обработка выбора системы"""
+        self.current_system = self.system_var.get()
         self.load_report()
     
     def load_report(self):
         """Загрузка и отображение отчёта"""
         person = self.person_var.get()
         date_str = self.date_var.get()
-        system = self.system_var.get()
+        system = self.current_system
+        
         if not all([person, date_str, system]): return
         
         try:
             date = datetime.strptime(date_str, "%d.%m.%Y %H:%M")
             for widget in self.scrollable_frame.winfo_children(): widget.destroy()
             
-            headers = ["Измеряемый параметр", "Диапазон нормальных значений", "Результат", "Интерпретация результата"]
+            headers = ["Параметр", "Диапазон", "Результат", "Интерпретация"]
             for i, header in enumerate(headers):
-                tk.Label(self.scrollable_frame, text=header, font=("Arial", 10, "bold"), 
-                         borderwidth=1, relief="solid", padx=5, pady=5, width=33, anchor="w").grid(row=0, column=i, sticky="nsew")
+                tk.Label(self.scrollable_frame, text=header, font=("Arial", 9, "bold"), 
+                         borderwidth=1, relief="solid", padx=4, pady=3, bg='lightblue').grid(row=0, column=i, sticky="nsew")
             
-            self.scrollable_frame.grid_columnconfigure(0, weight=1, minsize=300)
-            for i in range(1, 4): self.scrollable_frame.grid_columnconfigure(i, weight=0, minsize=150)
+            # Фиксированные ширины колонок для всей таблицы (57 символов ≈ 340px)
+            self.scrollable_frame.grid_columnconfigure(0, minsize=350)
+            self.scrollable_frame.grid_columnconfigure(1, minsize=120)
+            self.scrollable_frame.grid_columnconfigure(2, minsize=90)
+            self.scrollable_frame.grid_columnconfigure(3, minsize=150)
             
             cursor = self.conn.cursor()
             cursor.execute("""
@@ -250,10 +269,26 @@ class HealthReportApp:
             
             for idx, (param_name, param_value) in enumerate(results, start=1):
                 result_value = self.parse_number(param_value)
+                
+                # Обрезаем длинное название параметра (максимум 57 символов)
+                display_name = param_name
+                if len(display_name) > 57:
+                    display_name = display_name[:54] + "..."
+                
+                # Ширина колонки под 57 символов (примерно 80-90 символов в ширину)
+                param_width = 57 if len(display_name) >= 57 else int(len(display_name) * 1.2)
+                param_width = max(40, min(param_width, 70))
+                
                 if result_value is None:
-                    tk.Label(self.scrollable_frame, text=param_name, borderwidth=1, relief="solid", padx=5, pady=5, anchor="w").grid(row=idx, column=0, sticky="nsew")
-                    for c in range(1, 4):
-                        tk.Label(self.scrollable_frame, text="Нет данных" if c==1 else "-", borderwidth=1, relief="solid", padx=5, pady=5, anchor="center").grid(row=idx, column=c, sticky="nsew")
+                    lbl_param = tk.Label(self.scrollable_frame, text=display_name, borderwidth=1, relief="solid", 
+                                         padx=4, pady=3, anchor="w", bg='white', width=60)
+                    lbl_param.grid(row=idx, column=0, sticky="nsew")
+                    tk.Label(self.scrollable_frame, text="Нет данных", borderwidth=1, relief="solid", 
+                             padx=4, pady=3, anchor="center", bg='white').grid(row=idx, column=1, sticky="nsew")
+                    tk.Label(self.scrollable_frame, text="-", borderwidth=1, relief="solid", 
+                             padx=4, pady=3, anchor="center", bg='white').grid(row=idx, column=2, sticky="nsew")
+                    tk.Label(self.scrollable_frame, text="-", borderwidth=1, relief="solid", 
+                             padx=4, pady=3, anchor="center", bg='white').grid(row=idx, column=3, sticky="nsew")
                     continue
                 
                 if param_name in ref_values:
@@ -265,17 +300,189 @@ class HealthReportApp:
                     interpretation, bg_color = "Нет референса", "#FFFFFF"
                     norm_range = "Нет данных"
                 
-                tk.Label(self.scrollable_frame, text=param_name, borderwidth=1, relief="solid", padx=5, pady=5, anchor="w").grid(row=idx, column=0, sticky="nsew")
-                tk.Label(self.scrollable_frame, text=norm_range, borderwidth=1, relief="solid", padx=5, pady=5, anchor="center").grid(row=idx, column=1, sticky="nsew")
-                tk.Label(self.scrollable_frame, text=f"{result_value:g}".replace('.', ','), borderwidth=1, relief="solid", padx=5, pady=5, anchor="center").grid(row=idx, column=2, sticky="nsew")
+                text_color = "white" if bg_color == "#DC143C" else "black"
                 
-                fg = "white" if bg_color == "#DC143C" else "black"
-                tk.Label(self.scrollable_frame, text=interpretation, bg=bg_color, fg=fg, borderwidth=1, relief="solid", padx=5, pady=5, anchor="center").grid(row=idx, column=3, sticky="nsew")
+                # Создаём Labels для каждой ячейки в одной строке grid
+                lbl_param = tk.Label(self.scrollable_frame, text=display_name, borderwidth=1, relief="solid", 
+                                     padx=4, pady=3, anchor="w", bg=bg_color, fg=text_color, width=60)
+                lbl_param.grid(row=idx, column=0, sticky="nsew")
+                lbl_param.bind('<Button-1>', lambda e, p=param_name: self.update_chart_for_param(p))
+                
+                lbl_range = tk.Label(self.scrollable_frame, text=norm_range, borderwidth=1, relief="solid", 
+                                     padx=4, pady=3, anchor="center", bg=bg_color, fg=text_color)
+                lbl_range.grid(row=idx, column=1, sticky="nsew")
+                lbl_range.bind('<Button-1>', lambda e, p=param_name: self.update_chart_for_param(p))
+                
+                lbl_value = tk.Label(self.scrollable_frame, text=f"{result_value:g}".replace('.', ','), borderwidth=1, relief="solid", 
+                                     padx=4, pady=3, anchor="center", bg=bg_color, fg=text_color)
+                lbl_value.grid(row=idx, column=2, sticky="nsew")
+                lbl_value.bind('<Button-1>', lambda e, p=param_name: self.update_chart_for_param(p))
+                
+                lbl_interp = tk.Label(self.scrollable_frame, text=interpretation, borderwidth=1, relief="solid", 
+                                      padx=4, pady=3, anchor="center", bg=bg_color, fg=text_color)
+                lbl_interp.grid(row=idx, column=3, sticky="nsew")
+                lbl_interp.bind('<Button-1>', lambda e, p=param_name: self.update_chart_for_param(p))
             
             self.update_patient_info(person, date, system)
-            self.status_label.config(text=f"Загружено параметров: {len(results)}")
+            self.status_label.config(text=f"Загружено параметров: {len(results)} | Кликните на параметр для графика")
+            
+            # Автоматически строим график для первого параметра
+            if results:
+                first_param = results[0][0]  # Первый параметр
+                self.update_chart_for_param(first_param)
+            
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось загрузить отчёт:\n{e}")
+    
+    def update_chart_for_param(self, param_name):
+        """Обновление графика для выбранного параметра"""
+        self.selected_param = param_name
+        person = self.person_var.get()
+        system = self.current_system
+        
+        if not person or not system:
+            return
+
+        try:
+            self.ax.clear()
+            
+            # Очистка всех дополнительных элементов (включая легенду)
+            for artist in self.fig.axes[0].get_children():
+                if hasattr(artist, 'remove'):
+                    try:
+                        artist.remove()
+                    except:
+                        pass
+            
+            # Загрузка данных по датам
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                SELECT test_date, parameter_value FROM health_results 
+                WHERE person_name = ? AND system_name = ? AND parameter_name = ? 
+                ORDER BY test_date
+            """, (person, system, param_name))
+            rows = cursor.fetchall()
+
+            valid_data = []
+            for dt, val in rows:
+                v = self.parse_number(val)
+                if v is not None: valid_data.append((dt, v))
+
+            if not valid_data:
+                self.ax.text(0.5, 0.5, "Нет числовых данных для графика", ha='center', va='center', transform=self.ax.transAxes, fontsize=12)
+                self.canvas.draw()
+                return
+
+            dates, values = zip(*valid_data)
+                    
+            # Загрузка референсов
+            cursor.execute("""
+                SELECT norm_min, norm_max, minor_high_min, minor_high_max, 
+                    significant_high_min, significant_high_max, severe_high_min,
+                    minor_low_min, minor_low_max, significant_low_min, significant_low_max, severe_low_max
+                FROM reference_values WHERE parameter_name = ? AND system_name = ?
+            """, (param_name, system))
+            ref = cursor.fetchone()
+
+            # Определение границ Y для зон
+            y_data_min, y_data_max = min(values), max(values)
+            y_margin = (y_data_max - y_data_min) * 0.2 if y_data_max != y_data_min else 1.0
+            plot_min, plot_max = y_data_min - y_margin, y_data_max + y_margin
+
+            # Парсим референсные значения
+            ref_vals = [self.parse_number(x) for x in ref] if ref else [None]*12
+            
+            # Корректируем границы графика
+            if ref:
+                ref_valid = [v for v in ref_vals if v is not None]
+                if ref_valid:
+                    plot_min = min(plot_min, min(ref_valid) - y_margin)
+                    plot_max = max(plot_max, max(ref_valid) + y_margin)
+
+            # Отрисовка цветных зон
+            zones = []
+            legend_items = []
+            
+            if ref_vals[7] is not None and ref_vals[8] is not None:
+                zones.append((ref_vals[7], ref_vals[8], '#64adfa', 'Незнач. (-)'))
+                legend_items.append(('#64adfa', 'Незнач. (-)'))
+            if ref_vals[9] is not None and ref_vals[10] is not None:
+                zones.append((ref_vals[9], ref_vals[10], "#f8f7b0", 'Значит. (--)'))
+                legend_items.append(('#f8f7b0', 'Значит. (--)'))
+            if ref_vals[11] is not None:
+                zones.append((plot_min, ref_vals[11], '#f76666', 'Серьёз. (---)'))
+                legend_items.append(('#f76666', 'Серьёз. (---)'))
+            
+            if ref_vals[0] is not None and ref_vals[1] is not None:
+                zones.append((ref_vals[0], ref_vals[1], "#86f6a0", 'Норма'))
+                legend_items.append(("#86f6a0", 'Норма'))
+                
+            if ref_vals[2] is not None and ref_vals[3] is not None:
+                zones.append((ref_vals[2], ref_vals[3], "#64adfa", 'Незнач. (+)'))
+                legend_items.append(('#64adfa', 'Незнач. (+)'))
+            if ref_vals[4] is not None and ref_vals[5] is not None:
+                zones.append((ref_vals[4], ref_vals[5], "#f8f7b0", 'Значит. (++)'))
+                legend_items.append(('#f8f7b0', 'Значит. (++)'))
+            if ref_vals[6] is not None:
+                zones.append((ref_vals[6], plot_max, "#f76666", 'Серьёз. (+++)'))
+                legend_items.append(('#f76666', 'Серьёз. (+++)'))
+
+            # Рисуем зоны
+            for start, end, color, label in zones:
+                if start < end:
+                    self.ax.axhspan(start, end, color=color, alpha=0.4)
+
+            # Генерируем даты 1-го числа для каждого месяца
+            min_date, max_date = min(dates), max(dates)
+            current_date = min_date.replace(day=1)
+            while current_date <= max_date:
+                self.ax.axvline(x=current_date, color='black', linestyle='-', linewidth=1.5, alpha=0.5, zorder=2)
+                if current_date.month == 12:
+                    current_date = current_date.replace(year=current_date.year + 1, month=1)
+                else:
+                    current_date = current_date.replace(month=current_date.month + 1)
+
+            # Линия графика
+            self.ax.plot(dates, values, marker='o', linestyle='-', color='#0056b3', linewidth=2, markersize=6, zorder=3)
+
+            self.ax.set_title(f"Динамика: {param_name}", fontsize=12, pad=10)
+            self.ax.set_xlabel("Дата тестирования", fontsize=10)
+            self.ax.set_ylabel("Значение", fontsize=10)
+            self.ax.grid(True, linestyle='--', alpha=0.5)
+            self.ax.set_ylim(plot_min, plot_max)
+            
+            # Форматирование дат на оси X с отступом
+            self.ax.xaxis.set_major_formatter(mdates.DateFormatter('%d.%m'))
+            self.fig.autofmt_xdate(rotation=45, ha='right')
+            
+            # Очищаем и пересоздаём легенду
+            self.fig.delaxes(self.fig.axes[1]) if len(self.fig.axes) > 1 else None
+            legend_frame = self.fig.add_axes([0.1, 0.02, 0.8, 0.12], frameon=False)
+            legend_frame.set_xlim(0, 1)
+            legend_frame.set_ylim(0, 1)
+            legend_frame.axis('off')
+            
+            # Рисуем цветные квадраты с подписями в 2 строки
+            if legend_items:
+                items_per_row = 4
+                row_height = 0.35
+                x_step = 0.22
+                y_offset = 0.05
+                
+                for i, (color, label) in enumerate(legend_items):
+                    row = i // items_per_row
+                    col = i % items_per_row
+                    x = col * x_step + 0.02
+                    y = 0.7 - row * row_height
+                    
+                    legend_frame.add_patch(plt.Rectangle((x, y), 0.06, 0.06, facecolor=color, alpha=0.6, edgecolor='black', linewidth=0.5))
+                    legend_frame.text(x + 0.07, y + 0.03, label, fontsize=9, verticalalignment='center')
+            
+            self.canvas.draw()
+            self.chart_title.config(text=f"📊 {param_name}")
+            
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось построить график:\n{e}")
     
     def get_interpretation(self, value, ref):
         """Определение интерпретации результата и цвета"""
@@ -297,9 +504,9 @@ class HealthReportApp:
                 significant_max = self.parse_number(ref[5])
                 if significant_min is not None and significant_max is not None:
                     if significant_min <= value <= significant_max:
-                        return "значительные изменения (++)", "#FFD700"
+                        return "значительные изменения (++)", "#f8f7b0"
                 elif significant_min is not None and value >= significant_min:
-                    return "значительные изменения (++)", "#FFD700"
+                    return "значительные изменения (++)", "#f8f7b0"
             
             # Незначительные изменения (+) - от minor_high_min до minor_high_max
             if ref[2] is not None and ref[3] is not None:
@@ -323,9 +530,9 @@ class HealthReportApp:
                 significant_max = self.parse_number(ref[10])
                 if significant_min is not None and significant_max is not None:
                     if significant_min <= value <= significant_max:
-                        return "значительные изменения (--)", "#FFD700"
+                        return "значительные изменения (--)", "#f8f7b0"
                 elif significant_max is not None and value <= significant_max:
-                    return "значительные изменения (--)", "#FFD700"
+                    return "значительные изменения (--)", "#f8f7b0"
             
             # Незначительные изменения (-) - от minor_low_min до minor_low_max
             if ref[7] is not None and ref[8] is not None:
@@ -344,160 +551,6 @@ class HealthReportApp:
             info_text = f"Имя: {person}  |  Время тестирования: {date.strftime('%d.%m.%Y %H:%M')}  |  Система: {system}"
             self.info_label.config(text=info_text)
         except: pass
-
-    # ───────────── ФУНКЦИЯ: ДИАГРАММЫ ─────────────
-    def open_chart_window(self):
-        person = self.person_var.get()
-        system = self.system_var.get()
-        if not person or not system:
-            messagebox.showwarning("Внимание", "Сначала выберите пациента и систему организма.")
-            return
-
-        chart_win = tk.Toplevel(self.root)
-        chart_win.title(f"Динамика параметров: {system}")
-        chart_win.geometry("950x650")
-        chart_win.transient(self.root)
-
-        # Панель управления графиком
-        ctrl_frame = ttk.Frame(chart_win)
-        ctrl_frame.pack(fill=tk.X, padx=10, pady=5)
-
-        ttk.Label(ctrl_frame, text="Параметр:").pack(side=tk.LEFT, padx=5)
-        param_var = tk.StringVar()
-        param_combo = ttk.Combobox(ctrl_frame, textvariable=param_var, state="readonly", width=40)
-        param_combo.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
-
-        # Получаем список параметров для текущей системы
-        cursor = self.conn.cursor()
-        cursor.execute("""
-            SELECT DISTINCT parameter_name FROM health_results 
-            WHERE person_name = ? AND system_name = ? ORDER BY parameter_name
-        """, (person, system))
-        params = [row[0] for row in cursor.fetchall()]
-        param_combo['values'] = params
-        if params: param_combo.current(0)
-
-        # Matplotlib Figure
-        plt.style.use('default')
-        fig = plt.Figure(figsize=(9, 5.5), dpi=100)
-        ax = fig.add_subplot(111)
-        canvas = FigureCanvasTkAgg(fig, master=chart_win)
-        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-
-        def update_plot(event=None):
-            ax.clear()
-            selected = param_var.get()
-            if not selected: return
-
-            # Загрузка данных по датам
-            cursor.execute("""
-                SELECT test_date, parameter_value FROM health_results 
-                WHERE person_name = ? AND system_name = ? AND parameter_name = ? 
-                ORDER BY test_date
-            """, (person, system, selected))
-            rows = cursor.fetchall()
-
-            valid_data = []
-            for dt, val in rows:
-                v = self.parse_number(val)
-                if v is not None: valid_data.append((dt, v))
-
-            if not valid_data:
-                ax.text(0.5, 0.5, "Нет числовых данных для построения графика", ha='center', va='center', transform=ax.transAxes, fontsize=12)
-                canvas.draw()
-                return
-
-            dates, values = zip(*valid_data)
-                    
-            # Определяем диапазон дат для расчета 1-х чисел
-            min_date = min(dates)
-            max_date = max(dates)
-
-            # Загрузка референсов
-            cursor.execute("""
-                SELECT norm_min, norm_max, minor_high_min, minor_high_max, 
-                    significant_high_min, significant_high_max, severe_high_min,
-                    minor_low_min, minor_low_max, significant_low_min, significant_low_max, severe_low_max
-                FROM reference_values WHERE parameter_name = ? AND system_name = ?
-            """, (selected, system))
-            ref = cursor.fetchone()
-
-            # Определение границ Y для зон
-            y_data_min, y_data_max = min(values), max(values)
-            y_margin = (y_data_max - y_data_min) * 0.2 if y_data_max != y_data_min else 1.0
-            plot_min, plot_max = y_data_min - y_margin, y_data_max + y_margin
-
-            # Парсим референсные значения
-            ref_vals = [self.parse_number(x) for x in ref] if ref else [None]*12
-            
-            # Корректируем границы графика, чтобы включить референсные значения
-            if ref:
-                ref_valid = [v for v in ref_vals if v is not None]
-                if ref_valid:
-                    plot_min = min(plot_min, min(ref_valid) - y_margin)
-                    plot_max = max(plot_max, max(ref_valid) + y_margin)
-
-            # Отрисовка цветных зон (ИСПРАВЛЕННАЯ ЛОГИКА)
-            zones = []
-            
-            # 1. Низкие отклонения (используем конкретные min/max колонки)
-            if ref_vals[7] is not None and ref_vals[8] is not None:
-                zones.append((ref_vals[7], ref_vals[8], '#64adfa', 'Незначительные отклонения (-)'))
-            if ref_vals[9] is not None and ref_vals[10] is not None:
-                zones.append((ref_vals[9], ref_vals[10], '#f8d76a', 'Значительные отклонения (--)'))
-            if ref_vals[11] is not None:
-                zones.append((plot_min, ref_vals[11], '#f76666', 'Серьезные отклонения (---)'))
-            
-            # 2. Норма
-            if ref_vals[0] is not None and ref_vals[1] is not None:
-                zones.append((ref_vals[0], ref_vals[1], "#86f6a0", 'Норма'))
-                
-            # 3. Высокие отклонения (используем конкретные min/max колонки)
-            if ref_vals[2] is not None and ref_vals[3] is not None:
-                zones.append((ref_vals[2], ref_vals[3], "#64adfa", 'Незначительные отклонения (+)'))
-            if ref_vals[4] is not None and ref_vals[5] is not None:
-                zones.append((ref_vals[4], ref_vals[5], "#f8d76a", 'Значительные отклонения (++)'))
-            if ref_vals[6] is not None:
-                zones.append((ref_vals[6], plot_max, "#f76666", 'Серьезные отклонения (+++)'))
-
-            # Рисуем зоны
-            drawn_labels = set()
-            for start, end, color, label in zones:
-                # Проверка на корректный диапазон (start < end)
-                if start < end:
-                    ax.axhspan(start, end, color=color, alpha=0.4, label=label if label not in drawn_labels else "")
-                    drawn_labels.add(label)
-
-            # Генерируем даты 1-го числа для каждого месяца в диапазоне
-            current_date = min_date.replace(day=1)
-            while current_date <= max_date:
-                ax.axvline(x=current_date, color='black', linestyle='-', linewidth=1.5, alpha=1, zorder=2)
-                
-                # Переход к следующему месяцу
-                if current_date.month == 12:
-                    current_date = current_date.replace(year=current_date.year + 1, month=1)
-                else:
-                    current_date = current_date.replace(month=current_date.month + 1)
-
-            # Линия графика
-            ax.plot(dates, values, marker='o', linestyle='-', color='#0056b3', linewidth=2, markersize=6, label='Результат')
-
-            ax.set_title(f"Динамика: {selected}", fontsize=14, pad=10)
-            ax.set_xlabel("Дата тестирования", fontsize=11)
-            ax.set_ylabel("Значение параметра", fontsize=11)
-            ax.grid(True, linestyle='--', alpha=0.5)
-            ax.set_ylim(plot_min, plot_max)
-            
-            # Форматирование дат на оси X
-            ax.xaxis.set_major_formatter(mdates.DateFormatter('%d.%m.%Y'))
-            fig.autofmt_xdate(rotation=45)
-
-            ax.legend(loc='upper right', fontsize=9)
-            canvas.draw()
-        
-            
-        param_combo.bind('<<ComboboxSelected>>', update_plot)
-        update_plot()
 
     def start_pdf_import(self):
         """Запускает импорт PDF в отдельном потоке"""
